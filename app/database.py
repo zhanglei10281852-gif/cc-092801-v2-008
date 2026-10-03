@@ -311,6 +311,12 @@ PERMISSIONS = [
     ("announcements.write", "维护公告", "announcements", "write"),
     ("audit.read", "查看审计", "audit", "read"),
     ("jobs.run", "执行后台任务", "jobs", "run"),
+    ("trust.read", "查看供应商可信度", "trust", "read"),
+    ("trust.event.write", "上报供应商可信度事件", "trust", "event_write"),
+    ("trust.contact.read", "查看供应商完整联系方式", "trust", "contact_read"),
+    ("trust.complaint.read", "查看投诉与举报细节", "trust", "complaint_read"),
+    ("trust.recover", "复核恢复供应商能力", "trust", "recover"),
+    ("trust.manage", "管理供应商与人工覆盖", "trust", "manage"),
 ]
 
 
@@ -380,11 +386,28 @@ def init_db() -> None:
             "INSERT OR IGNORE INTO roles(code,name,description,is_system,created_at,updated_at) VALUES('auditor','审计查看员','只读查看业务与审计记录',1,?,?)",
             (now, now),
         )
+        connection.execute(
+            "INSERT OR IGNORE INTO roles(code,name,description,is_system,created_at,updated_at) VALUES('trust_reviewer','供应商复核员','可查看投诉细节并复核恢复供应商能力',1,?,?)",
+            (now, now),
+        )
         administrator = connection.execute("SELECT id FROM roles WHERE code='administrator'").fetchone()[0]
         connection.execute(
             "INSERT OR IGNORE INTO role_permissions(role_id,permission_id,granted_at) SELECT ?,id,? FROM permissions",
             (administrator, now),
         )
+        role_grants = {
+            "clerk": ["trust.read", "trust.event.write", "trust.contact.read"],
+            "auditor": ["audit.read", "trust.read"],
+            "trust_reviewer": ["trust.read", "trust.contact.read", "trust.complaint.read", "trust.recover"],
+        }
+        for role_code, permission_codes in role_grants.items():
+            role_id = connection.execute("SELECT id FROM roles WHERE code=?", (role_code,)).fetchone()[0]
+            for permission_code in permission_codes:
+                connection.execute(
+                    "INSERT OR IGNORE INTO role_permissions(role_id,permission_id,granted_at) "
+                    "SELECT ?,id,? FROM permissions WHERE code=?",
+                    (role_id, now, permission_code),
+                )
 
 
 def migrate_db() -> None:

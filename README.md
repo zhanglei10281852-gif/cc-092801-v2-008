@@ -32,7 +32,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8432
 curl -sS http://127.0.0.1:8432/api/system/health
 ```
 
-服务订单运营接口使用 `/api/compute` 前缀，身份、角色、审计和系统接口分别位于 `/api/auth`、`/api/roles`、`/api/audit` 与 `/api/system`。
+服务订单运营接口使用 `/api/compute` 前缀，身份、角色、审计和系统接口分别位于 `/api/auth`、`/api/roles`、`/api/audit` 与 `/api/system`；供应商可信度记录与隔离接口使用 `/api/trust` 前缀。
+
+## 供应商可信度与隔离
+
+红事（wedding）与白事（funeral）团队共享同一调度池，可信度按团队与场次类型独立累计：
+
+- `POST /api/trust/events` 上报迟到、临时换人、投诉或正向记录；评分按场次类型、90 天滚动时间窗口和证据来源（调度、客户、督导、官方，权重不同）累计，初始 100 分，低于 60 分自动隔离对应场次能力，`both` 类型事件同时计入两类。
+- 同一事件通过幂等键与事件指纹双重去重，重复上报返回 `duplicate=true` 且不重复扣分；评分台账可通过 `POST /api/trust/scores/replay` 从不可变事件表重放并返回前后校验和。
+- `POST /api/trust/candidates/query` 返回未被隔离的候选团队，按评分降序、正向记录数降序、编码升序稳定排序；处于复核观察期（默认 30 天）的团队标记 `probation`，观察期结束后评分仍不达标会重新隔离，偶发一次异常不会永久出局。
+- `POST /api/trust/recovery` 执行复核（驳回保持隔离，通过解除隔离并进入观察期）；`POST /api/trust/overrides` 供管理员人工覆盖，**必须填写期限 `effective_until` 与原因**。
+- 分级可见性：`trust.read` 查询，`trust.event.write` 上报，`trust.recover` 复核，`trust.manage` 管理/覆盖；`trust.contact.read` 可见完整联系电话（否则脱敏），`trust.complaint.read` 可见投诉细节（否则 `detail`/证据/上报人联系方式隐藏）。clerk、auditor、trust_reviewer 系统角色分别预置了对应权限层级。
+- `GET /api/trust/audit-summary` 汇总可信度相关审计动作（含被拒绝的操作）；所有状态与审计落盘 SQLite，重启后保持。
+
 
 ## 测试与编译检查
 
@@ -52,6 +64,7 @@ python -m app.cli compute-demo
 
 ```text
 app/compute/       任务模板、配额、提交、领取、回执和人工干预
+app/trust/          供应商可信度评分、能力隔离、复核恢复与分级可见性
 app/api/            登录、角色、审计和系统管理接口
 app/core/           时钟、安全、异常和分页能力
 app/repositories/   SQLite 查询与事务封装

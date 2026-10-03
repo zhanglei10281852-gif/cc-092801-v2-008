@@ -44,6 +44,11 @@ class MaintenanceService:
         "department_memberships",
         "audit_events",
         "background_jobs",
+        "trust_vendors",
+        "trust_events",
+        "trust_score_ledgers",
+        "trust_restrictions",
+        "trust_reviews",
     )
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock | None = None) -> None:
