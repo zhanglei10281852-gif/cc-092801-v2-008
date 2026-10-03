@@ -32,7 +32,49 @@ uvicorn app.main:app --host 0.0.0.0 --port 8432
 curl -sS http://127.0.0.1:8432/api/system/health
 ```
 
-服务订单运营接口使用 `/api/compute` 前缀，身份、角色、审计和系统接口分别位于 `/api/auth`、`/api/roles`、`/api/audit` 与 `/api/system`。
+服务订单运营接口使用 `/api/compute` 前缀，身份、角色、审计和系统接口分别位于 `/api/auth`、`/api/roles`、`/api/audit` 与 `/api/system`。供应商可信度与隔离接口位于 `/api/trust`。
+
+## 供应商可信度与隔离
+
+红事与白事团队共享调度池，可信度评分按场次类型分别累计，避免白事异常连累红事接单，反之亦然：
+
+- 事件类型 `late`（迟到）、`substitute`（临时换人）、`complaint`（投诉）、`no_show`（爽约）、`praise`（表扬），严重度 1-3，证据来源按可信度加权（`gps`/`dispatch_system` 高于 `online_review`）。
+- 评分在 30/90 天滚动窗口内累计；每条事件冻结当时的策略版本（`trust-policy-2026.10`）、权重与扣分，评分由事件台账顺序折叠得到，可随时重放且结果稳定。
+- 同一供应商的同一 `occurrence_key` 只入账一次，重复上报返回原事件并记一条 `denied` 审计，不会重复扣分。
+- 窗口扣分达到 15 分进入**降温**（仍可接单但排序靠后），达到 30 分或窗口内 2 起严重投诉则**自动隔离**该场次类型；隔离只限制对应能力。窗口滚动后偶发异常自然衰减。
+- 人工覆盖（`manual_block`/`manual_cooling`）必须写明原因和到期时间（停用最长 180 天、降温最长 90 天），到期自动失效。
+- 复核员可将隔离恢复为限期**观察期**（`probation`，最长 60 天，需满 7 天最短观察期才能正式 `restore`）；复核放行后旧账不再触发隔离，只保留历史贡献供解释。证据可被复核员**否决**（`dismiss`），事件不删除、只标记排除。
+
+权限分级（初始化时自动创建 `dispatcher` 现场调度员与 `trust_reviewer` 可信度复核员角色）：
+
+| 能力 | trust.read | trust.dispatch | trust.review | trust.write |
+| --- | --- | --- | --- | --- |
+| 查看评分/候选 | ✓ | ✓ | ✓ | ✓ |
+| 完整联系电话 | – | ✓ | – | ✓ |
+| 上报事件 | – | ✓ | – | ✓ |
+| 投诉细节/否决证据 | – | – | ✓ | ✓ |
+| 复核恢复 | – | – | ✓ | ✓ |
+| 登记供应商/人工覆盖 | – | – | – | ✓ |
+
+主要接口（均需 Bearer 会话令牌）：
+
+```text
+POST /api/trust/vendors                     登记供应商（trust.write）
+POST /api/trust/events                      上报事件，幂等（trust.dispatch）
+GET  /api/trust/vendors/{code}/scorecard    评分卡：两窗口逐项贡献与阈值解释
+GET  /api/trust/vendors/{code}/events       事件明细（投诉细节按分级脱敏）
+GET  /api/trust/candidates/{wedding|funeral} 候选供应商：稳定排序，隔离者不可见
+POST /api/trust/overrides                   人工覆盖，必须带 reason 与 expires_at
+POST /api/trust/reviews                     复核恢复（restore / probation）
+POST /api/trust/events/dismiss              否决事件证据（trust.review）
+GET  /api/trust/audit-summary               审计与处置摘要
+```
+
+可信度演示：
+
+```bash
+python -m app.cli trust-demo
+```
 
 ## 测试与编译检查
 
@@ -52,6 +94,7 @@ python -m app.cli compute-demo
 
 ```text
 app/compute/       任务模板、配额、提交、领取、回执和人工干预
+app/trust/         供应商可信度事件台账、评分回放、隔离与复核
 app/api/            登录、角色、审计和系统管理接口
 app/core/           时钟、安全、异常和分页能力
 app/repositories/   SQLite 查询与事务封装

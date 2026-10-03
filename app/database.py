@@ -311,6 +311,10 @@ PERMISSIONS = [
     ("announcements.write", "维护公告", "announcements", "write"),
     ("audit.read", "查看审计", "audit", "read"),
     ("jobs.run", "执行后台任务", "jobs", "run"),
+    ("trust.read", "查看可信度评分", "trust", "read"),
+    ("trust.dispatch", "调度供应商并上报事件", "trust", "dispatch"),
+    ("trust.review", "复核隔离与投诉证据", "trust", "review"),
+    ("trust.write", "登记供应商与人工覆盖", "trust", "write"),
 ]
 
 
@@ -380,11 +384,30 @@ def init_db() -> None:
             "INSERT OR IGNORE INTO roles(code,name,description,is_system,created_at,updated_at) VALUES('auditor','审计查看员','只读查看业务与审计记录',1,?,?)",
             (now, now),
         )
+        connection.execute(
+            "INSERT OR IGNORE INTO roles(code,name,description,is_system,created_at,updated_at) VALUES('dispatcher','现场调度员','可查询候选供应商、查看完整联系方式并上报可信度事件',1,?,?)",
+            (now, now),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO roles(code,name,description,is_system,created_at,updated_at) VALUES('trust_reviewer','可信度复核员','可查看投诉细节、否决证据并复核恢复隔离',1,?,?)",
+            (now, now),
+        )
         administrator = connection.execute("SELECT id FROM roles WHERE code='administrator'").fetchone()[0]
         connection.execute(
             "INSERT OR IGNORE INTO role_permissions(role_id,permission_id,granted_at) SELECT ?,id,? FROM permissions",
             (administrator, now),
         )
+        for role_code, permission_codes in (
+            ("dispatcher", ("trust.read", "trust.dispatch")),
+            ("trust_reviewer", ("trust.read", "trust.review")),
+        ):
+            role_id = connection.execute("SELECT id FROM roles WHERE code=?", (role_code,)).fetchone()[0]
+            for permission_code in permission_codes:
+                connection.execute(
+                    "INSERT OR IGNORE INTO role_permissions(role_id,permission_id,granted_at)"
+                    " SELECT ?,id,? FROM permissions WHERE code=?",
+                    (role_id, now, permission_code),
+                )
 
 
 def migrate_db() -> None:
